@@ -1,6 +1,7 @@
-using backend.Database;
+﻿using backend.Database;
 using backend.DTOs.common;
 using backend.DTOs.Tickets;
+using backend.DTOs.Users;
 using backend.Entities;
 using backend.Services;
 using backend.Services.Sorting;
@@ -161,7 +162,30 @@ public sealed class TicketsController(
         // the current user IS the requester - never client-supplied
         string requesterId = userContext.GetUserId()!;
 
-        Ticket ticket = dto.ToEntity(requesterId);
+        if (dto.AssigneeId is not null)
+        {
+            // Any account may raise a ticket, so this action carries no role attribute and
+            // the check lives here instead. Handing the ticket to someone is a different
+            // permission from raising it, and the matrix gives it to staff alone.
+            bool isStaff = userContext.IsInRole(Roles.Moderator) || userContext.IsInRole(Roles.Admin);
+            if (!isStaff)
+            {
+                return Problem(
+                    statusCode: StatusCodes.Status403Forbidden,
+                    detail: "Only a moderator or admin may assign a ticket.");
+            }
+
+            if (!await IsAssignableAsync(dto.AssigneeId))
+            {
+                return Problem(
+                    statusCode: StatusCodes.Status400BadRequest,
+                    detail: "That person cannot be assigned tickets. Pick an active moderator or admin.");
+            }
+        }
+
+        // Status is server-decided and starts Open even when an owner is named: assigned
+        // means someone holds it, in progress means work has started.
+        Ticket ticket = dto.ToEntity(requesterId, dto.AssigneeId);
         dbContext.Tickets.Add(ticket);
         await dbContext.SaveChangesAsync();
 
@@ -241,10 +265,6 @@ public sealed class TicketsController(
                 detail: "This ticket does not exist or has been deleted.");
         }
 
-        // if assignee is being set, the target must exist as a valid assignee.
-        // Once users exist: verify AssigneeId is a real moderator/admin.
-        // For now, accept any non-empty id (seed users: usr_sam, usr_priya).
-
         bool changed = false;
 
         if (dto.Status.HasValue)
@@ -275,6 +295,16 @@ public sealed class TicketsController(
 
         if (dto.AssigneeId is not null)
         {
+            // Same shape as the category check below: a bogus id is a 400 here rather than
+            // a 500 out of the foreign key. It also refuses a real id that is not a valid
+            // owner — a requester, or a deactivated colleague.
+            if (!await IsAssignableAsync(dto.AssigneeId))
+            {
+                return Problem(
+                    statusCode: StatusCodes.Status400BadRequest,
+                    detail: "That person cannot be assigned tickets. Pick an active moderator or admin.");
+            }
+
             ticket.AssigneeId = dto.AssigneeId;
             changed = true;
         }
@@ -327,5 +357,15 @@ public sealed class TicketsController(
         await dbContext.SaveChangesAsync();
 
         return NoContent();
+    }
+
+    // Reads UserQueries.IsAssignable, the same predicate GET /api/users/assignable filters
+    // the picker by, so the list a reader chooses from and the guard on their choice can
+    // never disagree.
+    private Task<bool> IsAssignableAsync(string userId)
+    {
+        return dbContext.Users
+            .Where(UserQueries.IsAssignable())
+            .AnyAsync(u => u.Id == userId);
     }
 }

@@ -1,6 +1,7 @@
-using backend.Database;
+﻿using backend.Database;
 using backend.DTOs.common;
 using backend.DTOs.Metrics;
+using backend.DTOs.Users;
 using backend.Entities;
 using backend.Services.Sorting;
 using backend.Settings;
@@ -137,7 +138,7 @@ public sealed class MetricsController(
         // Starting from tickets would silently drop exactly the idle agent an admin
         // most needs to see.
         List<AgentIdentity> staff = await dbContext.Users
-            .Where(u => (u.Role == UserRole.Moderator || u.Role == UserRole.Admin) && u.IsActive)
+            .Where(UserQueries.IsAssignable())
             .OrderBy(u => u.Name)
             .Select(u => new AgentIdentity(u.Id, u.Name))
             .ToListAsync();

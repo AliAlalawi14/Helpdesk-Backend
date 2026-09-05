@@ -1,4 +1,4 @@
-using FluentValidation;
+﻿using FluentValidation;
 
 namespace backend.DTOs.Tickets;
 
@@ -19,5 +19,11 @@ public sealed class CreateTicketDtoValidator : AbstractValidator<CreateTicketDto
 
         RuleFor(x => x.CategoryId)
             .NotEmpty();
+
+        // Whether the id names a real, assignable person is a database question the
+        // controller answers; this only rules out an empty string.
+        RuleFor(x => x.AssigneeId!)
+            .NotEmpty()
+            .When(x => x.AssigneeId is not null);
     }
 }

@@ -17,7 +17,7 @@ internal static class TicketMappings
         ]
     };
 
-    public static Ticket ToEntity(this CreateTicketDto dto, string requesterId)
+    public static Ticket ToEntity(this CreateTicketDto dto, string requesterId, string? assigneeId)
     {
         DateTime now = DateTime.UtcNow;
         return new Ticket
@@ -28,8 +28,8 @@ internal static class TicketMappings
             Status = TicketStatus.Open,        // server-decided
             Priority = dto.Priority,
             CategoryId = dto.CategoryId,
-            RequesterId = requesterId,         // from auth later, seed user for now
-            AssigneeId = null,                 // starts unassigned
+            RequesterId = requesterId,         // the caller, never client-supplied
+            AssigneeId = assigneeId,           // null unless staff named an owner
             CreatedAt = now,
             UpdatedAt = now
         };

@@ -93,7 +93,7 @@ public sealed class UsersController(
     public async Task<IActionResult> GetAssignableUsers()
     {
         List<AssignableUserDto> data = await dbContext.Users
-            .Where(u => u.IsActive && (u.Role == UserRole.Moderator || u.Role == UserRole.Admin))
+            .Where(UserQueries.IsAssignable())
             .OrderBy(u => u.Name)
             .Select(u => new AssignableUserDto { Id = u.Id, Name = u.Name, Role = u.Role })
             .ToListAsync();
