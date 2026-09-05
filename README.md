@@ -53,7 +53,9 @@ On Windows PowerShell:
 Copy-Item appsettings.Development.example.json appsettings.Development.json
 ```
 
-Then open it and fill in the values:
+The template already carries working local values — for a normal local setup you can copy
+it and move on to step 2 without editing anything. The table says what each one is, and
+which ones must change before this ever runs anywhere real:
 
 | Setting | What it is | Safe local value |
 |---|---|---|
@@ -107,8 +109,9 @@ Deleting that folder is the hard reset.
 
 **Two optional services** are also defined and are not needed to run the API:
 `helpdesk.seq` (log viewer, http://localhost:8080) and `helpdesk.aspire-dashboard`
-(telemetry, http://localhost:18888). Nothing in the code exports to either yet — see
-[Dependencies](#dependencies).
+(telemetry, http://localhost:18888). Both sit behind the `tools` profile, so they start
+only with `docker compose --profile tools up -d`. Nothing in the code exports to either
+yet — see [Dependencies](#dependencies).
 
 **Running Postgres yourself instead?** Create an empty database, point
 `ConnectionStrings:Database` at it, and skip to step 3 — the schema is created for you.
@@ -162,6 +165,76 @@ You should get three tickets inside a `{ "data": [...], "pagination": {...} }` e
 The OpenAPI document is at **http://localhost:5000/openapi/v1.json** in Development
 (anonymous — no token needed to read it).
 
+### Running the API in Docker too
+
+Steps 1-4 run the API on your machine and only Postgres in a container. To run the whole
+stack in containers instead — **from a bare clone, with none of steps 1-3 done**:
+
+```bash
+docker compose up -d --build
+```
+
+That is the entire procedure. Compose builds `backend/Dockerfile`, waits for Postgres to
+pass its healthcheck, applies both migrations, seeds, and serves on
+**http://localhost:5000**. You do not need `appsettings.Development.json` for this path;
+it is gitignored, so a fresh clone does not have one and the image is built before anyone
+could copy it. Everything the container needs is set in `docker-compose.yml` instead.
+
+Only `backend` and `helpdesk.postgres` start. The two optional tools are behind a profile:
+
+```bash
+docker compose --profile tools up -d      # adds seq + aspire-dashboard
+```
+
+They are gated because `helpdesk.seq` publishes on host **8080**, and if anything else on
+your machine holds that port, an ungated `up` fails as a whole rather than just skipping
+the log viewer neither the API nor the tests need.
+
+#### If you open this in Visual Studio
+
+Two launch profiles start a container, and they are not the same thing:
+
+| Profile | What it does |
+|---|---|
+| **Docker Compose** (the `docker-compose.dcproj` startup project) | Runs the compose stack above. Postgres comes with it. This is the one to use. |
+| **Container (Dockerfile)** (in `backend/Properties/launchSettings.json`) | Runs *only* the API container, with no compose and therefore no database. |
+
+The second one still has to reach Postgres somehow, so the profile sets
+`ConnectionStrings__Database` to `Host=host.docker.internal;Port=5439` — the container
+crossing back out to the port your host publishes. **Start Postgres first**
+(`docker compose up -d helpdesk.postgres`) or this profile has nothing to connect to.
+`host.docker.internal` is a Docker Desktop convenience; on plain Linux Docker it does not
+resolve unless you add it via `extra_hosts`.
+
+#### Why the connection string differs in a container
+
+`appsettings.Development.json` says `Host=localhost`, which is right when the API runs on
+your machine and wrong inside a container, where `localhost` is the API container itself
+and nothing listens on 5432 there. So `docker-compose.yml` overrides it:
+
+```yaml
+- ConnectionStrings__Database=Host=helpdesk.postgres;Port=5432;...
+```
+
+Two details worth knowing. Environment variables outrank `appsettings.*.json` in ASP.NET
+configuration, so this wins without editing the file. And `__` is the separator for a nested
+key, so `ConnectionStrings__Database` is `ConnectionStrings:Database`. The port is `5432`,
+not `5439` — containers reach each other on the service's own port; `5439` is only the
+mapping onto your host.
+
+Note the API still runs as **Development** in the container, so it migrates and seeds on
+startup just like a local run.
+
+#### The `pg_isready -h 127.0.0.1` in the healthcheck
+
+Do not drop the `-h`. On a **first** run — a fresh clone, or after deleting
+`./.containers/postgres_data` — the Postgres entrypoint starts a temporary server with
+`listen_addresses=''` to run `initdb`, so it answers on the unix socket but not over TCP.
+Without `-h`, `pg_isready` checks that socket, reports healthy while init is still running,
+and the API connects to a port nothing is listening on yet. The failure is
+`Connection refused` from the *correct* host, and it reproduces only on a cold start, never
+against a volume that already exists.
+
 ### 5. The frontend
 
 Start `helpdesk-web` (`npm install && npm run dev`) and open http://localhost:5173.
@@ -177,7 +250,10 @@ you point the browser at the API directly.
 | Symptom | Cause and fix |
 |---|---|
 | `Npgsql.NpgsqlException: Connection refused` on startup | Postgres is not running, or is on a different port. `docker compose ps` — the container should be up with `0.0.0.0:5439->5432/tcp`. Check `Port=5439` in your connection string. |
-| `password authentication failed for user "postgres"` | Your connection string password and the container's `POSTGRES_PASSWORD` disagree. If you set a `.env` *after* first creating the container, the volume kept the old password — `docker compose down -v` and start again. |
+| `Failed to connect to 127.0.0.1:5432` when the **API runs in a container** | The container is using the `Host=localhost` string from `appsettings.Development.json`, where `localhost` means the API container itself. Start it with `docker compose up`, which sets `ConnectionStrings__Database` to `Host=helpdesk.postgres`. A bare `docker run` of the image skips compose entirely and hits exactly this. |
+| `Connection refused` from the **right** host (`helpdesk.postgres`), only on a first run | The Postgres healthcheck went green during `initdb`, before the server accepted TCP. Check `docker-compose.yml` still has `-h 127.0.0.1` in the `pg_isready` test — see [the note above](#the-pg_isready--h-127001-in-the-healthcheck). |
+| `password authentication failed for user "postgres"` | Your connection string password and the container's `POSTGRES_PASSWORD` disagree. `POSTGRES_PASSWORD` is only read when the data directory is first created, so setting a `.env` afterwards changes nothing — the volume kept the old password. Either delete `./.containers/postgres_data` and start again, or reset the password in place: `docker compose exec helpdesk.postgres psql -U postgres -c "ALTER USER postgres WITH PASSWORD 'postgres';"` (the local socket is `trust`, so this works without knowing the old one). |
+| Connecting from your host works but from another container fails with the same password | Not a contradiction. The generated `pg_hba.conf` is `trust` for `127.0.0.1` and `scram-sha-256` for everything else, so loopback accepts *any* password while container-to-container traffic checks the real one. Test with the fix above, not with `psql` inside the Postgres container. |
 | `IDX10720: Unable to create KeyedHashAlgorithm… key size must be greater than 256 bits` | `Jwt:Key` is shorter than 32 characters. |
 | `appsettings.Development.json not found`, or a null connection string | You skipped step 1. Copy the example file. |
 | App starts, but `/api/tickets` returns 401 with a valid-looking token | The access token expired (30 minutes by default). Log in again — there is no refresh endpoint yet. |

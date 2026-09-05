@@ -7,7 +7,23 @@ services:
     ports:
       - 5000:8080
       - 5001:8081
+    depends_on:
+      helpdesk.postgres:
+        condition: service_healthy
     environment:
+      # Inside the compose network "localhost" is this container, not the database
+      # host, so appsettings.Development.json's connection string (which is correct
+      # for `dotnet run` on the host) resolves to nothing here. Point it at the
+      # postgres service instead - environment wins over appsettings in ASP.NET
+      # configuration, and __ is the separator for a nested key.
+      - ConnectionStrings__Database=Host=helpdesk.postgres;Port=5432;Database=${POSTGRES_DB:-TicketingSystem};Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres}
+      # A fresh clone has no appsettings.Development.json - it is gitignored, and the
+      # image is built before anyone copies the example. Everything the app needs to
+      # boot therefore has to come from here or from appsettings.json, so that
+      # `git clone && docker compose up` works with no setup step at all.
+      - Jwt__Key=local-docker-development-signing-key-not-for-any-real-deployment
+      - Cors__AllowedOrigins__0=http://localhost:5173
+      - Cors__AllowedOrigins__1=http://localhost:5174
       # Seq
       # - OTEL_EXPORTER_OTLP_ENDPOINT=http://helpdesk.seq:5341/ingest/otlp
       # - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
@@ -23,12 +39,34 @@ services:
       # Read from a local .env (untracked) so no credential lives in the repository.
       # Defaults to a throwaway value for a disposable local container.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    # depends_on alone only waits for the container to start, which is well before
+    # postgres accepts connections - the backend applies migrations on startup and
+    # would race it. pg_isready is the gate.
+    #
+    # -h 127.0.0.1 is load-bearing, not decoration. On a first run the entrypoint
+    # starts a temporary server with listen_addresses='' to run initdb, so it is
+    # reachable over the unix socket but not over TCP. Without -h, pg_isready checks
+    # that socket, reports healthy during init, and the backend connects to a port
+    # nothing is listening on yet - "Connection refused" on a fresh clone only.
+    # Over TCP the check correctly stays red until the real server is up.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-TicketingSystem} -h 127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     volumes:
       - ./.containers/postgres_data:/var/lib/postgresql/data
     ports:
       - 5439:5432
 
+  # Neither of the next two is needed to run the API, and nothing in the code exports
+  # to them yet. They sit behind a profile so a plain `docker compose up` does not
+  # start them - seq publishes on host 8080, which collides with anything else a
+  # developer happens to be running there and would fail the whole `up`.
+  # Start them with: docker compose --profile tools up -d
   helpdesk.seq:
+    profiles: ["tools"]
     image: datalust/seq:2024.3 # or latest
     environment:
       ACCEPT_EULA: "Y"
@@ -39,6 +77,7 @@ services:
       - 5341:5341
 
   helpdesk.aspire-dashboard:
+    profiles: ["tools"]
     image: mcr.microsoft.com/dotnet/aspire-dashboard:9.0
     environment:
       DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS: true
