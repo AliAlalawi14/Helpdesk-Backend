@@ -430,7 +430,8 @@ envelope:
 ```
 
 Pagination, filtering and sorting are executed **in the database**, never in memory. `limit`
-is clamped to 1–100 and defaults to 20.
+is clamped to 1–100 and defaults to 20; `page` is clamped to a minimum of 1, so `?page=0` or
+a negative page returns the first page rather than failing.
 
 **Ticket filters.** `status`, `priority`, `category` and `requester` take comma-separated
 lists; `assignee` takes exactly one of `me`, `unassigned`, or a user id; `search` matches
@@ -595,9 +596,6 @@ Honest gaps, not hidden ones.
 - **No automated tests.** The solution contains one project — the API. Test packages appear
   in the version catalogue but there is no test project; the frontend carries the test suite
   for this build.
-- **`?page=0` throws.** `Limit` is clamped to 1–100; `Page` is not, so page 0 produces
-  `Skip(-limit)` and the query fails. Clamp `Page` the way `Limit` is clamped in
-  `TicketQueryParameters`.
 - **No refresh endpoint.** Login issues a refresh token and stores it, and
   `RefreshTokenExpirationDays` is honoured, but nothing spends it. When the access token
   expires, the client has to log in again.
