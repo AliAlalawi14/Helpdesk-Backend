@@ -80,8 +80,8 @@ All four use the password `Password123!`:
 | Email | Role | Lands on |
 |---|---|---|
 | `admin@example.com` | admin | `/admin` |
-| `sam@example.com` | moderator | `/queue` |
-| `priya@example.com` | moderator | `/queue` |
+| `sam@example.com` | moderator | `/my-work` |
+| `priya@example.com` | moderator | `/my-work` |
 | `jordan@example.com` | user | `/tickets` |
 
 Seed data is twelve tickets spread across all four statuses, all four priorities and the
