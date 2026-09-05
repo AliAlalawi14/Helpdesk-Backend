@@ -1,0 +1,842 @@
+﻿@backend_HostAddress = http://localhost:5000
+@auth = {{backend_HostAddress}}/api/auth
+@tickets = {{backend_HostAddress}}/api/tickets
+@categories = {{backend_HostAddress}}/api/categories
+
+# ---------------------------------------------------------------------------
+# STEP 1 — run the three logins below, then paste each accessToken into the
+# matching @variable. VS's .http editor has no request variables, so this is
+# manual. Tokens expire after 30 minutes (Jwt:ExpirationInMinutes) — re-login
+# and re-paste if you start getting 401s mid-run.
+# ---------------------------------------------------------------------------
+
+### Login as USER (jordan)
+POST {{auth}}/login
+Content-Type: application/json
+
+{ "email": "jordan@example.com", "password": "Password123!" }
+
+###
+
+### Login as MODERATOR (sam)
+POST {{auth}}/login
+Content-Type: application/json
+
+{ "email": "sam@example.com", "password": "Password123!" }
+
+###
+
+### Login as ADMIN
+POST {{auth}}/login
+Content-Type: application/json
+
+{ "email": "admin@example.com", "password": "Password123!" }
+
+###
+
+@userToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJoZWxwZGVzay1jbGllbnQiLCJpc3MiOiJoZWxwZGVzay1hcGkiLCJleHAiOjE3ODg0NzY0MDcsInN1YiI6InVzcl9qb3JkYW4iLCJlbWFpbCI6ImpvcmRhbkBleGFtcGxlLmNvbSIsImh0dHA6Ly9zY2hlbWFzLm1pY3Jvc29mdC5jb20vd3MvMjAwOC8wNi9pZGVudGl0eS9jbGFpbXMvcm9sZSI6InVzZXIiLCJpYXQiOjE3ODg0NzQ2MDcsIm5iZiI6MTc4ODQ3NDYwN30.6qpsanVCHeuOF6oLUiv0H1rPy7hXElYfRmZXrtlj9bI
+@modToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJoZWxwZGVzay1jbGllbnQiLCJpc3MiOiJoZWxwZGVzay1hcGkiLCJleHAiOjE3ODg0NzY0NDAsInN1YiI6InVzcl9zYW0iLCJlbWFpbCI6InNhbUBleGFtcGxlLmNvbSIsImh0dHA6Ly9zY2hlbWFzLm1pY3Jvc29mdC5jb20vd3MvMjAwOC8wNi9pZGVudGl0eS9jbGFpbXMvcm9sZSI6Im1vZGVyYXRvciIsImlhdCI6MTc4ODQ3NDY0MCwibmJmIjoxNzg4NDc0NjQwfQ.ZgA6XBZIfZXczfO4gpL37AdO2bqmOxmYGCuRvcqaFcQ
+@adminToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJoZWxwZGVzay1jbGllbnQiLCJpc3MiOiJoZWxwZGVzay1hcGkiLCJleHAiOjE3ODg0NzY0NTgsInN1YiI6InVzcl9hZG1pbiIsImVtYWlsIjoiYWRtaW5AZXhhbXBsZS5jb20iLCJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL3dzLzIwMDgvMDYvaWRlbnRpdHkvY2xhaW1zL3JvbGUiOiJhZG1pbiIsImlhdCI6MTc4ODQ3NDY1OCwibmJmIjoxNzg4NDc0NjU4fQ.DCWYsv3rjvQ9bYa_8MR1UmvBsxe98wZPslJ_fqF68T8
+
+# ---------------------------------------------------------------------------
+# STEP 2 — every seeded ticket is requested by usr_jordan, so ownership and
+# scope are untestable against seed data alone. This creates a ticket owned by
+# SAM: the requesterId comes from the token, not the body. Copy its "id" into
+# @samTicket, and copy any id from the user's own list into @jordanTicket.
+# ---------------------------------------------------------------------------
+
+### Create a ticket AS MODERATOR — response requesterId must be "usr_sam"
+POST {{tickets}}
+Authorization: Bearer {{modToken}}
+Content-Type: application/json
+
+{
+  "subject": "Sam owned ticket",
+  "description": "Used to prove ownership checks reject a non-owner.",
+  "priority": "High",
+  "categoryId": "cat_it_access"
+}
+
+###
+
+### List jordan's own tickets — copy any id into @jordanTicket
+GET {{tickets}}?limit=5
+Authorization: Bearer {{userToken}}
+Accept: application/json
+
+###
+
+@samTicket = tkt_01a06967-2801-74ac-ac9c-bcd82b32f462
+@jordanTicket = tkt_01a068ec-52d7-7fcb-a660-8da27d14f6dc
+
+# ---------------------------------------------------------------------------
+# STEP 3 — the bypass matrix. Each pair is "wrong role denied / right role ok".
+# ---------------------------------------------------------------------------
+
+### BYPASS 1 — user tries to PATCH a ticket -> expect 403
+PATCH {{tickets}}/{{samTicket}}
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{ "status": "Resolved" }
+
+###
+
+### Same PATCH as moderator -> expect 200
+PATCH {{tickets}}/{{samTicket}}
+Authorization: Bearer {{modToken}}
+Content-Type: application/json
+
+{ "status": "Resolved" }
+
+###
+
+### BYPASS 2 — user tries to DELETE -> expect 403
+DELETE {{tickets}}/{{samTicket}}
+Authorization: Bearer {{userToken}}
+
+###
+
+### DELETE as moderator -> expect 403 (delete is admin-only, not staff-wide)
+DELETE {{tickets}}/{{samTicket}}
+Authorization: Bearer {{modToken}}
+
+###
+
+### Same DELETE as admin -> expect 204
+DELETE {{tickets}}/{{samTicket}}
+Authorization: Bearer {{adminToken}}
+
+###
+
+### BYPASS 3 — user creates a category -> expect 403
+POST {{categories}}
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{ "name": "Should Not Work" }
+
+###
+
+### Admin creates a category -> expect 201
+### NOTE: "IT - Networking" already exists from the verification run, so this
+### returns 409. Change the name to see the 201.
+POST {{categories}}
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "name": "IT - Networking" }
+
+###
+
+# ---------------------------------------------------------------------------
+# STEP 4 — scope and ownership.
+# ---------------------------------------------------------------------------
+
+### SCOPE — user lists tickets: totalItems counts ONLY jordan's
+GET {{tickets}}?limit=100
+Authorization: Bearer {{userToken}}
+Accept: application/json
+
+###
+
+### SCOPE — moderator lists tickets: totalItems is HIGHER (includes sam's)
+GET {{tickets}}?limit=100
+Authorization: Bearer {{modToken}}
+Accept: application/json
+
+###
+
+### OWNERSHIP — user opens sam's ticket -> 403
+GET {{tickets}}/{{samTicket}}
+Authorization: Bearer {{userToken}}
+Accept: application/json
+
+###
+
+### OWNERSHIP — user opens their OWN ticket -> 200
+GET {{tickets}}/{{jordanTicket}}
+Authorization: Bearer {{userToken}}
+Accept: application/json
+
+###
+
+### OWNERSHIP — user comments on sam's ticket -> 403
+POST {{tickets}}/{{samTicket}}/comments
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{ "body": "should be blocked" }
+
+###
+
+### OWNERSHIP — user comments on their OWN ticket -> 201, authorId = usr_jordan
+POST {{tickets}}/{{jordanTicket}}/comments
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{ "body": "Any update on this?" }
+
+###
+
+### assignee=me as moderator -> tickets assigned to sam
+GET {{tickets}}?assignee=me
+Authorization: Bearer {{modToken}}
+Accept: application/json
+
+###
+
+### No token at all on a protected route -> 401 (fallback policy)
+GET {{tickets}}
+Accept: application/json
+
+###
+
+# ---------------------------------------------------------------------------
+# STEP 4 — ADMIN USER MANAGEMENT (GET /api/users, PATCH /api/users/{id})
+# Run these AFTER the user-scope ticket tests above: promoting jordan turns him
+# into staff, so the "plain user sees only their own tickets" checks stop being
+# meaningful until the reset request at the very bottom is run.
+# ---------------------------------------------------------------------------
+
+### List users — as admin (4 seeded users; role is a column now, not a join)
+GET {{backend_HostAddress}}/api/users
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### List users — as moderator -> 403 (controller is admin-only)
+GET {{backend_HostAddress}}/api/users
+Authorization: Bearer {{modToken}}
+Accept: application/json
+
+###
+
+### List users — as user -> 403
+GET {{backend_HostAddress}}/api/users
+Authorization: Bearer {{userToken}}
+Accept: application/json
+
+###
+
+### Change role — promote jordan to moderator
+PATCH {{backend_HostAddress}}/api/users/usr_jordan
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "role": "moderator" }
+
+###
+
+### Verify — jordan now lists as "Moderator" (plain column update; note the
+### capitalised JSON value — UserRole serialises like TicketStatus does)
+GET {{backend_HostAddress}}/api/users
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### Deactivate a user
+PATCH {{backend_HostAddress}}/api/users/usr_priya
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "isActive": false }
+
+###
+
+### Verify the loop closes — priya can no longer log in -> 403 "deactivated"
+POST {{auth}}/login
+Content-Type: application/json
+
+{ "email": "priya@example.com", "password": "Password123!" }
+
+###
+
+### Invalid role NAME -> 400, but from JSON binding, not FluentValidation:
+### the body is the framework's { errors: { "$.role": [...] } }, not our
+### lowercased field dictionary. Still a 400, different shape.
+PATCH {{backend_HostAddress}}/api/users/usr_jordan
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "role": "superadmin" }
+
+###
+
+### Non-existent user -> 404
+PATCH {{backend_HostAddress}}/api/users/usr_nobody
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "isActive": false }
+
+###
+
+### PATCH as non-admin -> 403
+PATCH {{backend_HostAddress}}/api/users/usr_jordan
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{ "role": "admin" }
+
+###
+
+### SELF-GUARD — admin deactivates their OWN account -> 409
+PATCH {{backend_HostAddress}}/api/users/usr_admin
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "isActive": false }
+
+###
+
+### SELF-GUARD — admin demotes themselves -> 409
+PATCH {{backend_HostAddress}}/api/users/usr_admin
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "role": "user" }
+
+###
+
+### SELF-GUARD — admin deactivating SOMEONE ELSE is still fine -> 200
+PATCH {{backend_HostAddress}}/api/users/usr_sam
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "isActive": false }
+
+###
+
+# ---------------------------------------------------------------------------
+# RESET — put the seed data back so the scope tests above stay runnable.
+# ---------------------------------------------------------------------------
+
+### Reset — jordan back to plain user
+PATCH {{backend_HostAddress}}/api/users/usr_jordan
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "role": "user" }
+
+###
+
+### Reset — priya reactivated
+PATCH {{backend_HostAddress}}/api/users/usr_priya
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "isActive": true }
+
+###
+
+### Reset — sam reactivated
+PATCH {{backend_HostAddress}}/api/users/usr_sam
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "isActive": true }
+
+###
+
+# ---------------------------------------------------------------------------
+# STEP 5 — CATEGORY MULTI-SELECT. backend.http predates auth (no tokens in it),
+# so the filter tests live here where {{modToken}} exists.
+# ---------------------------------------------------------------------------
+
+### Category — single value (unchanged: IN with one item == the old equality)
+GET {{tickets}}?category=cat_it_access
+Authorization: Bearer {{modToken}}
+Accept: application/json
+
+###
+
+### Category — multi-select (should return tickets from BOTH categories)
+GET {{tickets}}?category=cat_it_access,cat_it_hardware
+Authorization: Bearer {{modToken}}
+Accept: application/json
+
+###
+
+### Category — unknown id -> empty page, not an error
+GET {{tickets}}?category=cat_nope
+Authorization: Bearer {{modToken}}
+Accept: application/json
+
+###
+
+### All three Contains-filters composed in one query
+GET {{tickets}}?category=cat_it_access,cat_hr_payroll&status=open,in_progress&priority=high,urgent
+Authorization: Bearer {{modToken}}
+Accept: application/json
+
+###
+
+# ---------------------------------------------------------------------------
+# STEP 6 — USERS LIST: pagination, filtering, sorting.
+# The response shape CHANGED here: GET /api/users now returns
+# { data, pagination } instead of a bare array.
+#
+# Worth checking the SQL once (log it, or ToQueryString()): this list should
+# produce ONE query with two left joins, not one query plus N role lookups.
+# That's the N+1 fix, visible.
+# ---------------------------------------------------------------------------
+
+### Users — paginated (now { data, pagination })
+GET {{backend_HostAddress}}/api/users?page=1&limit=2
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### Page 2 — different rows, same totalItems
+GET {{backend_HostAddress}}/api/users?page=2&limit=2
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### Filter by role — proves the join-based filter runs server-side
+GET {{backend_HostAddress}}/api/users?role=moderator
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### Filter by role — multi-select
+GET {{backend_HostAddress}}/api/users?role=moderator,admin
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### Filter by active state (run after a deactivate above, or expect an empty page)
+GET {{backend_HostAddress}}/api/users?isActive=false
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### Search across name AND email
+GET {{backend_HostAddress}}/api/users?search=sam
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### Sort by role, then name. Role is an int column now, so this orders by
+### SEVERITY (User < Moderator < Admin), not alphabetically as it did when
+### role was a joined string.
+GET {{backend_HostAddress}}/api/users?sort=role,name
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### Sort descending
+GET {{backend_HostAddress}}/api/users?sort=createdAt desc
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### Invalid sort field -> 400 (whitelist rejects anything not in UserMappings)
+GET {{backend_HostAddress}}/api/users?sort=passwordHash
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### limit over the 100 cap -> clamped to 100, not an error
+GET {{backend_HostAddress}}/api/users?limit=5000
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+# ---------------------------------------------------------------------------
+# STEP 7 — CATEGORIES: pagination, rename, soft-delete.
+# GET /api/categories also returns { data, pagination } now.
+# ---------------------------------------------------------------------------
+
+### Categories — paginated (now { data, pagination })
+GET {{categories}}?page=1&limit=2
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### Search + sort
+GET {{categories}}?search=it&sort=name
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### Invalid sort field -> 400
+GET {{categories}}?sort=isDeleted
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### Rename a category -> 200
+PATCH {{categories}}/cat_it_hardware
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "name": "IT - Hardware & Peripherals" }
+
+###
+
+### Rename to its OWN current name -> 200, not 409 (the c.Id != id exclusion)
+PATCH {{categories}}/cat_it_hardware
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "name": "IT - Hardware & Peripherals" }
+
+###
+
+### Rename to an existing OTHER name -> 409
+PATCH {{categories}}/cat_it_hardware
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "name": "HR - Payroll" }
+
+###
+
+### Rename a non-existent category -> 404
+PATCH {{categories}}/cat_nope
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "name": "Ghost" }
+
+###
+
+### Empty name -> 400 validation
+PATCH {{categories}}/cat_it_hardware
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "name": "" }
+
+###
+
+### Rename as moderator -> 403 (admin-only)
+PATCH {{categories}}/cat_it_hardware
+Authorization: Bearer {{modToken}}
+Content-Type: application/json
+
+{ "name": "Nope" }
+
+###
+
+### Reset the rename
+PATCH {{categories}}/cat_it_hardware
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "name": "IT - Hardware" }
+
+###
+
+### THE GUARD — delete a category that HAS tickets -> 409.
+### Without this, those tickets' required Category nav can't resolve past the
+### !IsDeleted filter and they fall out of the queue.
+DELETE {{categories}}/cat_it_access
+Authorization: Bearer {{adminToken}}
+
+###
+
+### Delete as moderator -> 403 (admin-only)
+DELETE {{categories}}/cat_it_access
+Authorization: Bearer {{modToken}}
+
+###
+
+### Delete a non-existent category -> 404
+DELETE {{categories}}/cat_nope
+Authorization: Bearer {{adminToken}}
+
+###
+
+### SOFT-DELETE TRIO, step 1 — create an unused category, copy its id below
+POST {{categories}}
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "name": "Temp - Delete Me" }
+
+###
+
+@tempCategory = cat_REPLACE_WITH_NEW_ID
+
+### step 2 — delete it -> 204 (no tickets, so the guard lets it through)
+DELETE {{categories}}/{{tempCategory}}
+Authorization: Bearer {{adminToken}}
+
+###
+
+### step 3 — gone from the list: the global query filter hides it everywhere
+GET {{categories}}?limit=100
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### ...and gone by id too -> 404, proving the filter applies to lookups
+PATCH {{categories}}/{{tempCategory}}
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "name": "Back From The Dead" }
+
+###
+
+# ---------------------------------------------------------------------------
+# STEP 8 — THE IDENTITY / DOMAIN SPLIT.
+# Credentials live in identity.asp_net_users; name, role and IsActive live on
+# ticket.users. `sub` carries the DOMAIN id, so nothing after login needs a
+# lookup to answer "who is this?".
+# ---------------------------------------------------------------------------
+
+### Login, then paste the token into jwt.io: `sub` must be "usr_admin" (the
+### DOMAIN id, not a GUID) and the role claim must be lowercase "admin" —
+### [Authorize(Roles = "admin")] is an exact string match and "Admin" matches nothing.
+POST {{auth}}/login
+Content-Type: application/json
+
+{ "email": "admin@example.com", "password": "Password123!" }
+
+###
+
+### /me — reads the domain record through UserContext.GetUserAsync (cached 30 min)
+GET {{auth}}/me
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### THE PAYOFF — every ticket row carries requesterName/assigneeName, so the
+### queue is readable without a second call to the admin-only /api/users.
+### assigneeName stays null on an unassigned ticket rather than failing.
+GET {{tickets}}?limit=5
+Authorization: Bearer {{modToken}}
+Accept: application/json
+
+###
+
+### Comments carry authorName too
+GET {{tickets}}/{{jordanTicket}}
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### CACHE EVICTION — run these three in order.
+### 1) populate jordan's cache entry
+GET {{auth}}/me
+Authorization: Bearer {{userToken}}
+Accept: application/json
+
+###
+
+### 2) admin deactivates him
+PATCH {{backend_HostAddress}}/api/users/usr_jordan
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "isActive": false }
+
+###
+
+### 3) jordan's /me must report isActive:false immediately. If it still says
+### true, the memoryCache.Remove in UpdateUser is missing and the record is
+### stale for up to 30 minutes.
+GET {{auth}}/me
+Authorization: Bearer {{userToken}}
+Accept: application/json
+
+###
+
+### Reset
+PATCH {{backend_HostAddress}}/api/users/usr_jordan
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "isActive": true, "role": "user" }
+
+###
+
+# ---------------------------------------------------------------------------
+# STEP 9 - ADMIN METRICS. All three are admin-only and aggregate in SQL; each
+# runs a fixed 3 queries no matter how many agents, categories or requesters
+# exist. Soft-deleted tickets/users/categories are excluded automatically by
+# the global query filters, which is why the counts here can be lower than a
+# raw "SELECT count(*) FROM ticket.tickets".
+# ---------------------------------------------------------------------------
+
+### Overview. thresholdHours/thresholdDays echo the Metrics config section, so
+### the card can label itself "Unassigned over 24h" without hardcoding 24.
+### ticketsByStatus always carries all four keys, zeros included.
+### topCategories is capped at 4 and cannot contain a zero count.
+GET {{backend_HostAddress}}/api/metrics/overview
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### Same endpoint as moderator -> 403
+GET {{backend_HostAddress}}/api/metrics/overview
+Authorization: Bearer {{modToken}}
+Accept: application/json
+
+###
+
+### Same endpoint as user -> 403
+GET {{backend_HostAddress}}/api/metrics/overview
+Authorization: Bearer {{userToken}}
+Accept: application/json
+
+###
+
+### Agents. Every active moderator/admin appears, INCLUDING zero-load ones -
+### the result is built from the user list, not from the tickets.
+### avgResolveMinutes and oldestOpenAgeHours are null (never 0) when there is
+### no history: "resolved nothing" and "resolves instantly" are different facts.
+GET {{backend_HostAddress}}/api/metrics/agents
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### Agents as moderator -> 403
+GET {{backend_HostAddress}}/api/metrics/agents
+Authorization: Bearer {{modToken}}
+
+###
+
+### Requesters. Paginated + sorted server-side, default raisedLast30Days desc.
+### No role filter: moderators and admins raise tickets too.
+GET {{backend_HostAddress}}/api/metrics/requesters
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### Sort by each whitelisted field
+GET {{backend_HostAddress}}/api/metrics/requesters?sort=name
+Authorization: Bearer {{adminToken}}
+
+###
+
+GET {{backend_HostAddress}}/api/metrics/requesters?sort=openNow desc
+Authorization: Bearer {{adminToken}}
+
+###
+
+GET {{backend_HostAddress}}/api/metrics/requesters?sort=lastRaisedAt desc
+Authorization: Bearer {{adminToken}}
+
+###
+
+### Not on the whitelist -> 400, same shape as every other list endpoint
+GET {{backend_HostAddress}}/api/metrics/requesters?sort=passwordHash
+Authorization: Bearer {{adminToken}}
+
+###
+
+### Second page
+GET {{backend_HostAddress}}/api/metrics/requesters?page=2&limit=1
+Authorization: Bearer {{adminToken}}
+
+###
+
+### Requesters as user -> 403
+GET {{backend_HostAddress}}/api/metrics/requesters
+Authorization: Bearer {{userToken}}
+
+###
+
+# ---------------------------------------------------------------------------
+# STEP 10 - CATEGORY COUNTS AND RECATEGORISING.
+# Together these make the DELETE 409's advice actually followable: move the
+# tickets out, watch ticketCount fall to 0, then delete.
+# ---------------------------------------------------------------------------
+
+### ticketCount comes back on every row in ONE request - no per-category call.
+### It respects the ticket soft-delete filter, so it always agrees with the
+### DELETE endpoint's own in-use check.
+GET {{categories}}?limit=100
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### Recategorise a ticket (moderator may do this - it is triage, not admin)
+PATCH {{tickets}}/{{jordanTicket}}
+Authorization: Bearer {{modToken}}
+Content-Type: application/json
+
+{ "categoryId": "cat_hr_payroll" }
+
+###
+
+### Unknown category -> 400 with "Category '...' does not exist.",
+### not a 500 out of the foreign key
+PATCH {{tickets}}/{{jordanTicket}}
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "categoryId": "cat_nope" }
+
+###
+
+### Empty string -> 400 from the validator
+PATCH {{tickets}}/{{jordanTicket}}
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "categoryId": "" }
+
+###
+
+### A plain user still cannot PATCH a ticket at all -> 403
+PATCH {{tickets}}/{{jordanTicket}}
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{ "categoryId": "cat_it_access" }
+
+###
+
+### ResolvedAt (Task 1) is not on the ticket payload, so check the transitions
+### through the metrics instead: resolve a ticket, then watch
+### throughput.resolvedLast7Days and the agent's avgResolveMinutes move.
+PATCH {{tickets}}/{{jordanTicket}}
+Authorization: Bearer {{modToken}}
+Content-Type: application/json
+
+{ "status": "Resolved" }
+
+###
+
+GET {{backend_HostAddress}}/api/metrics/agents
+Authorization: Bearer {{adminToken}}
+Accept: application/json
+
+###
+
+### Reopen - ResolvedAt clears, so the ticket leaves the throughput count again
+PATCH {{tickets}}/{{jordanTicket}}
+Authorization: Bearer {{modToken}}
+Content-Type: application/json
+
+{ "status": "Open" }
+
+###

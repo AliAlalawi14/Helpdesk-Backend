@@ -1,0 +1,98 @@
+{
+  "settings": {
+    "components": {
+      "code": true,
+      "binaries": false
+    },
+    "targetId": ""
+  },
+  "analysisStartTime": "2026-09-03T15:11:43.9890642Z",
+  "analysisEndTime": "2026-09-03T15:11:44.9107219Z",
+  "privacyModeHelpUrl": "https://go.microsoft.com/fwlink/?linkid=2270980",
+  "stats": {
+    "summary": {
+      "projects": 1,
+      "issues": 1,
+      "incidents": 1,
+      "effort": 0
+    },
+    "charts": {
+      "severity": {
+        "Mandatory": 0,
+        "Optional": 0,
+        "Potential": 0,
+        "Information": 1
+      },
+      "category": {
+        "Pkg": 1
+      }
+    }
+  },
+  "projects": [
+    {
+      "path": "backend.csproj",
+      "startingProject": true,
+      "issues": 1,
+      "storyPoints": 0,
+      "properties": {
+        "appName": "backend",
+        "projectKind": "AspNetCore",
+        "frameworks": [
+          "net10.0"
+        ],
+        "languages": [
+          "C#"
+        ],
+        "tools": [
+          "MSBuild"
+        ],
+        "isSdkStyle": true,
+        "isTestProject": false,
+        "numberOfFiles": 13,
+        "numberOfCodeFiles": 11,
+        "linesTotal": 326,
+        "linesOfCode": 290,
+        "totalApiScanned": 0,
+        "minLinesOfCodeToChange": 0,
+        "maxLinesOfCodeToChange": 0
+      },
+      "ruleInstances": [
+        {
+          "incidentId": "4e787e09-cd57-4380-acf8-bfddc64a9d9b",
+          "ruleId": "Pkg.0001",
+          "description": "Project references \u0027OpenTelemetry.Exporter.OpenTelemetryProtocol\u0027 1.11.1; proposed upgrade to 1.18.0.",
+          "projectPath": "backend.csproj",
+          "state": "Active",
+          "location": {
+            "snippetModel": {
+              "unrestricted": "OpenTelemetry.Exporter.OpenTelemetryProtocol, 1.11.1",
+              "protected": "OpenTelemetry.Exporter.OpenTelemetryProtocol, 1.11.1"
+            },
+            "kind": "File",
+            "path": "backend.csproj",
+            "snippet": "OpenTelemetry.Exporter.OpenTelemetryProtocol, 1.11.1",
+            "protectedSnippet": "OpenTelemetry.Exporter.OpenTelemetryProtocol, 1.11.1",
+            "label": "OpenTelemetry.Exporter.OpenTelemetryProtocol 1.11.1",
+            "properties": {
+              "PackageId": "OpenTelemetry.Exporter.OpenTelemetryProtocol",
+              "PackageVersion": "1.11.1",
+              "PackageNewVersion": "1.18.0",
+              "PackageReplacements": null
+            }
+          }
+        }
+      ],
+      "features": []
+    }
+  ],
+  "rules": {
+    "Pkg.0001": {
+      "id": "Pkg.0001",
+      "isFeature": false,
+      "description": "Project references a package included in this upgrade.\n\nThe project references one of the packages being upgraded. This finding records the reference (current and proposed version) so the assessment lists every affected project even when no breaking API changes were detected.",
+      "label": "Project references an upgraded package",
+      "severity": "Information",
+      "effort": 0
+    }
+  }
+}

@@ -1,0 +1,98 @@
+@backend_HostAddress = http://localhost:5000
+@auth = {{backend_HostAddress}}/api/auth
+
+### Login — valid (admin). Copy "accessToken" from the response into @token below.
+POST {{auth}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# Paste the accessToken from the login response above (no quotes, no "Bearer" prefix).
+# VS's .http editor has no request variables, so this step is manual.
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJoZWxwZGVzay1jbGllbnQiLCJpc3MiOiJoZWxwZGVzay1hcGkiLCJleHAiOjE3ODg0NzYzMzYsInN1YiI6InVzcl9hZG1pbiIsImVtYWlsIjoiYWRtaW5AZXhhbXBsZS5jb20iLCJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL3dzLzIwMDgvMDYvaWRlbnRpdHkvY2xhaW1zL3JvbGUiOiJhZG1pbiIsImlhdCI6MTc4ODQ3NDUzNiwibmJmIjoxNzg4NDc0NTM2fQ.f-nzBXeoAN6jUB5vqr2JxJOnmVtcV7H_TJUqYMOuWeg
+
+### Me — with the token (should return admin's id/name/email/role)
+GET {{auth}}/me
+Authorization: Bearer {{token}}
+Accept: application/json
+
+###
+
+### Me — WITHOUT a token (401 ProblemDetails: type/title/status/detail/requestId)
+GET {{auth}}/me
+Accept: application/json
+
+###
+
+### Me — garbage token (401 ProblemDetails, same shape)
+GET {{auth}}/me
+Authorization: Bearer this.is.garbage
+Accept: application/json
+
+###
+
+### Login — wrong password (401, generic message)
+POST {{auth}}/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "WrongPassword!"
+}
+
+###
+
+### Login — unknown email (401, byte-identical body to wrong password)
+POST {{auth}}/login
+Content-Type: application/json
+
+{
+  "email": "nobody@example.com",
+  "password": "Password123!"
+}
+
+###
+
+### Login — malformed email (400 validation, not 401)
+POST {{auth}}/login
+Content-Type: application/json
+
+{
+  "email": "not-an-email",
+  "password": "x"
+}
+
+###
+
+### Login as moderator
+POST {{auth}}/login
+Content-Type: application/json
+
+{
+  "email": "sam@example.com",
+  "password": "Password123!"
+}
+
+###
+
+### Login as user
+POST {{auth}}/login
+Content-Type: application/json
+
+{
+  "email": "jordan@example.com",
+  "password": "Password123!"
+}
+
+###
+
+### Logout — revokes refresh tokens (204)
+POST {{auth}}/logout
+Authorization: Bearer {{token}}
+
+###

@@ -1,0 +1,388 @@
+﻿@backend_HostAddress = http://localhost:5000
+@tickets = {{backend_HostAddress}}/api/tickets
+
+### Baseline — all tickets, default sort (newest first), default page size
+GET {{tickets}}
+Accept: application/json
+
+###
+
+### Pagination — page 1, small page size (proves limit works)
+GET {{tickets}}?page=1&limit=5
+Accept: application/json
+
+###
+
+### Pagination — page 2 (proves offset; should show rows 6–10 of the seed)
+GET {{tickets}}?page=2&limit=5
+Accept: application/json
+
+###
+
+### Limit clamp — asking for 500 should cap at 100 (MaxPageSize)
+GET {{tickets}}?limit=500
+Accept: application/json
+
+###
+
+### Status — single value
+GET {{tickets}}?status=open
+Accept: application/json
+
+###
+
+### Status — multi-select (SQL WHERE status IN (...))
+GET {{tickets}}?status=open,in_progress
+Accept: application/json
+
+###
+
+### Status — the in_progress underscore-parsing case specifically
+GET {{tickets}}?status=in_progress
+Accept: application/json
+
+###
+
+### Priority — single value
+GET {{tickets}}?priority=urgent
+Accept: application/json
+
+###
+
+### Priority — multi-select
+GET {{tickets}}?priority=high,urgent
+Accept: application/json
+
+###
+
+### Category — single category by id (seeded: cat_it_hardware, cat_it_access, cat_hr_payroll)
+GET {{tickets}}?category=cat_it_access
+Accept: application/json
+
+###
+
+### Assignee — unassigned (AssigneeId IS NULL)
+GET {{tickets}}?assignee=unassigned
+Accept: application/json
+
+###
+
+### Assignee — specific moderator by id (seeded: usr_sam, usr_priya)
+GET {{tickets}}?assignee=usr_sam
+Accept: application/json
+
+###
+
+### Assignee — "me" (currently a no-op until auth; should behave like no filter)
+GET {{tickets}}?assignee=me
+Accept: application/json
+
+###
+
+### Search — free text across subject/description
+GET {{tickets}}?search=vpn
+Accept: application/json
+
+###
+
+### Search — no matches (proves the "no tickets match" empty state)
+GET {{tickets}}?search=zzzznotfound
+Accept: application/json
+
+###
+
+### Sort — by priority descending (severity order, proves int storage sorts right)
+GET {{tickets}}?sort=priority desc
+Accept: application/json
+
+###
+
+### Sort — by createdAt ascending (oldest first)
+GET {{tickets}}?sort=createdAt
+Accept: application/json
+
+###
+
+### Sort — multi-field (priority desc, then newest first within each)
+GET {{tickets}}?sort=priority,createdAt
+Accept: application/json
+
+###
+
+### Sort — invalid field should return 400 Problem (whitelist rejection)
+GET {{tickets}}?sort=passwordHash
+Accept: application/json
+
+###
+
+### Combined — the "real" moderator-queue query: open+in_progress, high+urgent, unassigned, newest first
+GET {{tickets}}?status=open,in_progress&priority=high,urgent&assignee=unassigned&sort=priority desc,createdAt desc&page=1&limit=10
+Accept: application/json
+
+###
+### Ticket detail — valid id (grab a real tkt_ id from GET /api/tickets first)
+GET {{tickets}}/tkt_REPLACE_WITH_REAL_ID
+Accept: application/json
+
+###
+
+### Ticket detail — this ticket has comments in the seed? (thread should be ordered oldest-first)
+GET {{tickets}}/tkt_REPLACE_WITH_REAL_ID
+Accept: application/json
+
+###
+
+### Ticket detail — non-existent id returns 404 Problem
+GET {{tickets}}/tkt_does_not_exist
+Accept: application/json
+
+###
+
+### Ticket detail — garbage id (not even a tkt_ prefix) still 404, not 500
+GET {{tickets}}/garbage
+Accept: application/json
+
+###
+
+### Round-trip — create a ticket, then fetch it by the returned id
+# 1) run this, copy "id" from the 201 response body / Location header
+POST {{tickets}}
+Content-Type: application/json
+
+{
+  "subject": "Detail endpoint smoke test",
+  "description": "Created to verify GET by id returns the same shape.",
+  "priority": "high",
+  "categoryId": "cat_it_access"
+}
+
+###
+
+# 2) paste the id from step 1 here
+GET {{tickets}}/tkt_PASTE_ID_FROM_CREATE
+Accept: application/json
+
+###
+
+### Add comment — valid (paste a real tkt_ id; then re-run GET detail to see the thread)
+POST {{tickets}}/tkt_REPLACE_WITH_REAL_ID/comments
+Content-Type: application/json
+
+{
+  "body": "Tried reconnecting from a different network, same failure."
+}
+
+###
+
+### Add comment — second one, to prove oldest-first ordering in the detail thread
+POST {{tickets}}/tkt_REPLACE_WITH_REAL_ID/comments
+Content-Type: application/json
+
+{
+  "body": "Escalating — this is blocking the whole team."
+}
+
+###
+
+### Add comment — empty body returns 400 with field-level errors
+POST {{tickets}}/tkt_REPLACE_WITH_REAL_ID/comments
+Content-Type: application/json
+
+{
+  "body": ""
+}
+
+###
+
+### Add comment — non-existent ticket returns 404 (path resource missing, not 400)
+POST {{tickets}}/tkt_does_not_exist/comments
+Content-Type: application/json
+
+{
+  "body": "This should never be stored."
+}
+
+###
+
+### Verify the thread — run after the two valid comments above
+GET {{tickets}}/tkt_REPLACE_WITH_REAL_ID
+Accept: application/json
+
+###
+
+### PATCH — change status only (priority + assignee must stay untouched)
+PATCH {{tickets}}/tkt_REPLACE_WITH_REAL_ID
+Content-Type: application/json
+
+{
+  "status": "InProgress"
+}
+
+###
+
+### PATCH — change priority only
+PATCH {{tickets}}/tkt_REPLACE_WITH_REAL_ID
+Content-Type: application/json
+
+{
+  "priority": "urgent"
+}
+
+###
+
+### PATCH — assign to a moderator (seed: usr_sam, usr_priya)
+PATCH {{tickets}}/tkt_01a068fc-1dbf-7f35-81c9-63af302303f0
+Content-Type: application/json
+
+{
+  "assigneeId": "usr_sam"
+}
+
+###
+
+### PATCH — all three at once
+PATCH {{tickets}}/tkt_01a068fc-1dbf-7f35-81c9-63af302303f0
+Content-Type: application/json
+
+{
+  "status": "resolved",
+  "priority": "high",
+  "assigneeId": "usr_priya"
+}
+
+###
+
+### PATCH — empty body (no-op, should 200 and change nothing, no UpdatedAt bump)
+PATCH {{tickets}}/tkt_01a068fc-1dbf-7f35-81c9-63af302303f0
+Content-Type: application/json
+
+{
+}
+
+###
+
+### PATCH — invalid status enum, should 400 (from the JSON reader, not FluentValidation)
+PATCH {{tickets}}/tkt_01a068fc-1dbf-7f35-81c9-63af302303f0
+Content-Type: application/json
+
+{
+  "status": "banana"
+}
+
+###
+
+### PATCH — snake_case enum. FAILS with 400 today; passes only if the snake_case
+### naming policy is added to JsonStringEnumConverter in Program.cs
+PATCH {{tickets}}/tkt_01a068fc-1dbf-7f35-81c9-63af302303f0
+Content-Type: application/json
+
+{
+  "status": "in_progress"
+}
+
+###
+
+### PATCH — non-existent ticket, should 404
+PATCH {{tickets}}/tkt_does_not_exist
+Content-Type: application/json
+
+{
+  "status": "open"
+}
+
+###
+
+### Verify partial-update: PATCH only status, then GET — priority/assignee unchanged
+PATCH {{tickets}}/tkt_01a068fc-1dbf-7f35-81c9-63af302303f0
+Content-Type: application/json
+
+{
+  "status": "closed"
+}
+
+###
+
+GET {{tickets}}/tkt_01a068fc-1dbf-7f35-81c9-63af302303f0
+Accept: application/json
+
+###
+### DELETE — soft-delete a ticket (grab a real tkt_ id first). Expect 204.
+DELETE {{tickets}}/tkt_REPLACE_WITH_REAL_ID
+
+###
+
+### Verify it's gone from detail — expect 404
+GET {{tickets}}/tkt_REPLACE_WITH_REAL_ID
+Accept: application/json
+
+###
+
+### Verify it's gone from the list — this id should NOT appear in data[]
+GET {{tickets}}?limit=100
+Accept: application/json
+
+###
+
+### DELETE again — already soft-deleted, expect 404 (not a second 204)
+DELETE {{tickets}}/tkt_01a068fc-1dbf-7f35-81c9-63af302303f0
+
+###
+
+### DELETE non-existent — expect 404
+DELETE {{tickets}}/tkt_01a068fc-1dbf-7f35-81c9-63af302303f0
+
+###
+
+### List categories — now returns { data, pagination }, name-sorted by default.
+### NOTE: every request in this file predates auth and will 401 — the tokened
+### versions of these live in rbac.http.
+GET {{backend_HostAddress}}/api/categories
+Accept: application/json
+
+###
+
+### Create a category — expect 201
+POST {{backend_HostAddress}}/api/categories
+Content-Type: application/json
+
+{
+  "name": "IT - Software"
+}
+
+###
+
+### Create duplicate — expect 409 Conflict
+POST {{backend_HostAddress}}/api/categories
+Content-Type: application/json
+
+{
+  "name": "IT - Software"
+}
+
+###
+
+### Create duplicate, different case — should STILL 409 (case-insensitive)
+POST {{backend_HostAddress}}/api/categories
+Content-Type: application/json
+
+{
+  "name": "it - software"
+}
+
+###
+
+### Empty name — expect 400 (validation)
+POST {{backend_HostAddress}}/api/categories
+Content-Type: application/json
+
+{
+  "name": ""
+}
+
+###
+
+### Verify new category is filterable on tickets (use its returned id)
+GET {{tickets}}?category=cat_hr_payroll
+Accept: application/json
+
+###

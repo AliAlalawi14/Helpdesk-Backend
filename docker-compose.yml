@@ -1,0 +1,46 @@
+services:
+  backend:
+    image: ${DOCKER_REGISTRY-}backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - 5000:8080
+      - 5001:8081
+    environment:
+      # Seq
+      # - OTEL_EXPORTER_OTLP_ENDPOINT=http://devhabit.seq:5341/ingest/otlp
+      # - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      # Aspire Dashboard
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://devhabit.aspire-dashboard:18889
+      - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+
+  devhabit.postgres:
+    image: postgres:17.2 # or latest
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-TicketingSystem}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      # Read from a local .env (untracked) so no credential lives in the repository.
+      # Defaults to a throwaway value for a disposable local container.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - ./.containers/postgres_data:/var/lib/postgresql/data
+    ports:
+      - 5439:5432
+
+  devhabit.seq:
+    image: datalust/seq:2024.3 # or latest
+    environment:
+      ACCEPT_EULA: "Y"
+    volumes:
+      - ./.containers/seq_data:/data
+    ports:
+      - 8080:80
+      - 5341:5341
+
+  devhabit.aspire-dashboard:
+    image: mcr.microsoft.com/dotnet/aspire-dashboard:9.0
+    environment:
+      DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS: true
+    ports:
+      - 18888:18888
