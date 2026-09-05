@@ -37,6 +37,10 @@ public sealed class TicketsController(
         List<string> categories = query.ParseCategories();
         List<string> requesters = query.ParseRequesters();
         string? search = query.Search?.Trim();
+        // "HD-42", "hd 42" and "42" all mean ticket 42. The reference is quoted back at
+        // an agent far more often than a subject line is, so the one search box has to
+        // find it; without this the number would be readable and useless.
+        int? searchReference = ParseReference(search);
         // Npgsql refuses a non-UTC DateTime against timestamptz; a bound instant may
         // arrive as Local or Unspecified depending on how the client wrote it.
         DateTime? createdBefore = AsUtc(query.CreatedBefore);
@@ -61,6 +65,7 @@ public sealed class TicketsController(
             // directly. string.Contains(value, StringComparison) has no SQL
             // translation at all - EF throws rather than falling back.
             .Where(t => search == null
+                || searchReference != null && t.Reference == searchReference
                 || EF.Functions.ILike(t.Subject, $"%{search}%")
                 || EF.Functions.ILike(t.Description, $"%{search}%"));
 
@@ -362,6 +367,21 @@ public sealed class TicketsController(
     // Reads UserQueries.IsAssignable, the same predicate GET /api/users/assignable filters
     // the picker by, so the list a reader chooses from and the guard on their choice can
     // never disagree.
+    // Digits out of whatever was typed, so a quoted "HD-0042" finds ticket 42. Anything
+    // with no digits, or a number too large to be a reference, simply does not match on
+    // this clause and the text search still runs.
+    private static int? ParseReference(string? search)
+    {
+        if (string.IsNullOrWhiteSpace(search))
+        {
+            return null;
+        }
+
+        string digits = new([.. search.Where(char.IsDigit)]);
+
+        return digits.Length > 0 && int.TryParse(digits, out int reference) ? reference : null;
+    }
+
     private Task<bool> IsAssignableAsync(string userId)
     {
         return dbContext.Users

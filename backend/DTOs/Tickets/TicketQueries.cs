@@ -9,6 +9,7 @@ internal static class TicketQueries
         return ticket => new TicketDto
         {
             Id = ticket.Id,
+            Reference = ticket.Reference,
             Subject = ticket.Subject,
             Description = ticket.Description,
             Status = ticket.Status,
@@ -29,6 +30,7 @@ internal static class TicketQueries
         return ticket => new TicketDetailDto
         {
             Id = ticket.Id,
+            Reference = ticket.Reference,
             Subject = ticket.Subject,
             Description = ticket.Description,
             Status = ticket.Status,

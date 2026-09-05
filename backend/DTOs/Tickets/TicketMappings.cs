@@ -9,6 +9,7 @@ internal static class TicketMappings
     {
         Mappings =
         [
+            new SortMapping(nameof(TicketDto.Reference), nameof(Ticket.Reference)),
             new SortMapping(nameof(TicketDto.Subject), nameof(Ticket.Subject)),
             new SortMapping(nameof(TicketDto.Status), nameof(Ticket.Status)),
             new SortMapping(nameof(TicketDto.Priority), nameof(Ticket.Priority)),

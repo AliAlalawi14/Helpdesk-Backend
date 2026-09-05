@@ -5,6 +5,7 @@ namespace backend.DTOs.Tickets;
 public sealed record TicketDetailDto
 {
     public required string Id { get; init; }
+    public required int Reference { get; init; }
     public required string Subject { get; init; }
     public required string Description { get; init; }
     public required TicketStatus Status { get; init; }

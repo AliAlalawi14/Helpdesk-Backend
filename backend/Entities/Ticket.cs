@@ -4,6 +4,11 @@ public sealed class Ticket
 {
     public string Id { get; set; } = null!;
 
+    // The number a requester quotes: short, sequential, and readable down a phone line,
+    // which the GUID id is not. Database-generated, so two tickets raised at the same
+    // instant cannot collide. The "HD-" prefix is presentation and is not stored.
+    public int Reference { get; set; }
+
     public string Subject { get; set; } = null!;
     public string Description { get; set; } = null!;
 

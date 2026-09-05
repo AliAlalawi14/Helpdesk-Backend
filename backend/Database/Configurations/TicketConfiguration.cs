@@ -54,6 +54,11 @@ public sealed class TicketConfiguration : IEntityTypeConfiguration<Ticket>
         builder.HasQueryFilter(t => !t.IsDeleted);
 
         // indexes on the columns the centerpiece query filters/sorts on
+        // Postgres owns the counter: EF never supplies a value, and the unique index is
+        // what makes the reference safe to quote.
+        builder.Property(t => t.Reference).ValueGeneratedOnAdd().UseIdentityByDefaultColumn();
+        builder.HasIndex(t => t.Reference).IsUnique();
+
         builder.HasIndex(t => t.Status);
         builder.HasIndex(t => t.Priority);
         builder.HasIndex(t => t.AssigneeId);
