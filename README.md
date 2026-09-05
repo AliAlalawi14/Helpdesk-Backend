@@ -14,6 +14,7 @@ serves the API only and ships no UI.
 - [Troubleshooting](#troubleshooting) — what to do when a step fails
 - [Seeded data and logins](#seeded-data-and-logins)
 - [How it is organised](#how-it-is-organised)
+- [The database](#the-database) — the two schemas, and why Identity is there
 - [API reference](#api-reference)
 - [Conventions](#conventions)
 - [Architecture, and why](#architecture-and-why)
@@ -76,12 +77,17 @@ dashboard's thresholds — see [Architecture](#thresholds-are-configuration-not-
 **With Docker**, from the `backend` folder (the one with `docker-compose.yml`):
 
 ```bash
-docker compose up -d devhabit.postgres
+docker compose up -d helpdesk.postgres
 ```
 
-The service name is `devhabit.postgres` — an inherited name from the project template, not a
-typo. It publishes Postgres on **5439**, not the default 5432, so it cannot collide with a
-Postgres you already run. That is why the connection string above says `Port=5439`.
+It publishes Postgres on **5439**, not the default 5432, so it cannot collide with a Postgres
+you already run. That is why the connection string above says `Port=5439`.
+
+> **If you ran an earlier version of this repo**, the service used to be called
+> `devhabit.postgres`. Compose keys containers by service name, so the rename creates a new
+> one and leaves the old container behind. Your data is safe either way — it lives in the
+> bind mount at `./.containers/postgres_data`, not inside the container. Clear the orphan
+> with `docker compose down --remove-orphans`, then bring the new one up.
 
 The compose file reads the password from the environment and falls back to `postgres`:
 
@@ -100,8 +106,9 @@ The data directory is bind-mounted to `./.containers/postgres_data`, which is gi
 Deleting that folder is the hard reset.
 
 **Two optional services** are also defined and are not needed to run the API:
-`devhabit.seq` (log viewer, http://localhost:8080) and `devhabit.aspire-dashboard`
-(telemetry, http://localhost:18888).
+`helpdesk.seq` (log viewer, http://localhost:8080) and `helpdesk.aspire-dashboard`
+(telemetry, http://localhost:18888). Nothing in the code exports to either yet — see
+[Dependencies](#dependencies).
 
 **Running Postgres yourself instead?** Create an empty database, point
 `ConnectionStrings:Database` at it, and skip to step 3 — the schema is created for you.
@@ -185,7 +192,7 @@ you point the browser at the API directly.
 ```bash
 docker compose down -v                 # stops containers and deletes the volume
 rm -rf .containers/postgres_data
-docker compose up -d devhabit.postgres
+docker compose up -d helpdesk.postgres
 cd backend && dotnet run --launch-profile http    # recreates the schema and reseeds
 ```
 
@@ -255,6 +262,131 @@ its sort whitelist, so adding a field is one folder rather than five.
 
 ---
 
+## The database
+
+One PostgreSQL database, **two schemas**: `ticket` holds the domain, `identity` holds
+credentials. Two `DbContext` types map to them and each keeps its own migration history
+table, so the two evolve independently.
+
+### Why ASP.NET Identity is here at all
+
+Storing a password is the part of an application that is least forgiving of a good guess.
+Identity ships the pieces that are tedious to get right and dangerous to get wrong: PBKDF2
+hashing with a per-user salt and a versioned format that can be re-hashed as the work factor
+rises, normalised-email uniqueness, a security stamp that invalidates a session when the
+password changes, and lockout counters. Hand-rolling that for a case study would have been
+the wrong place to spend the risk budget.
+
+What it is **not** used for here is the interesting part:
+
+- **No `AspNetUserRoles`.** Roles live as a column on the domain user — see
+  [Role is a column](#role-is-a-column-not-a-join). The Identity role tables exist because
+  `IdentityDbContext` creates them; nothing writes to them.
+- **No cookies, no `SignInManager` session.** `AuthController` uses `UserManager` only to
+  check the password, then issues a JWT itself through `TokenProvider`. The API stays
+  stateless.
+- **No Identity profile data.** Name, `IsActive`, timestamps and role all moved out to the
+  domain user; the migration that did it is called `StripDomainColumnsFromIdentityUser`.
+
+So Identity is used as a **credential store**, not as an identity model. That is what makes
+it replaceable: swap it for an external provider and the domain does not notice, because the
+only thing pointing at it is one column.
+
+### Why two schemas rather than one
+
+They are different **kinds** of data with different lifecycles and different blast radii:
+
+- **They version separately.** Each context has its own `__EFMigrationsHistory` inside its
+  own schema (wired up in `Program.cs` via `MigrationsHistoryTable`). An Identity framework
+  upgrade that rewrites its tables cannot collide with a domain migration, and neither can
+  end up half-applied because of the other.
+- **They are exposed differently.** Everything in `ticket` is read by ordinary endpoints.
+  Nothing in `identity` is ever projected into a response — no query in the codebase joins
+  across the boundary, because it *cannot*: they are separate contexts.
+- **The boundary is a deletion boundary too.** A soft-deleted domain user disappears from
+  every query through a global filter, while the credential row is untouched — so
+  deactivating someone never risks orphaning a password hash or, worse, freeing an email for
+  re-registration.
+- **It keeps the swap cheap.** `User.IdentityId` is the only link. Replace the credential
+  store and one column changes meaning; drop the `identity` schema entirely and the domain
+  still stands up.
+
+The cost is that a "user" is two rows, and both seeders have to create both. That is
+`SeedUsersAsync`'s job, and it is why it must run before tickets are seeded.
+
+### The `ticket` schema
+
+The domain. Everything the API reads and writes.
+
+![Ticket schema](docs/images/schema-ticket.png)
+
+> **Diagram goes here.** Save it as `docs/images/schema-ticket.png` and this renders on
+> GitHub. Generate it from the live database with pgAdmin's ERD tool, DBeaver
+> (*Database Navigator → schema → ER Diagram*), or JetBrains Rider — or draw it by hand.
+
+| Table | Holds | Notes |
+|---|---|---|
+| `users` | the domain user: name, email, `role`, `is_active`, `identity_id` | soft-deleted; `identity_id` is the only link to the other schema |
+| `categories` | ticket categories | soft-deleted, so removing one cannot orphan its tickets |
+| `tickets` | the ticket itself | two FKs to `users` (`requester_id`, `assignee_id`) — EF cannot tell them apart, so `TicketConfiguration` names both explicitly — plus one to `categories`; `reference` is an identity column with a unique index |
+| `ticket_comments` | the thread on a ticket | FK to `tickets` and to `users`; filtered by its parent ticket's `is_deleted` |
+| `__EFMigrationsHistory` | this schema's migration history | separate from the identity one |
+
+`assignee_id` is the only nullable relationship — null means unassigned.
+
+### The `identity` schema
+
+Credentials, and nothing else.
+
+![Identity schema](docs/images/schema-identity.png)
+
+> **Diagram goes here.** Save it as `docs/images/schema-identity.png`.
+
+| Table | Holds | Used? |
+|---|---|---|
+| `asp_net_users` | email, normalised email, password hash, security stamp, lockout | **yes** — the credential record |
+| `refresh_tokens` | token, `expires_at_utc`, FK to `asp_net_users`, cascade delete, unique index on the token | **yes** — written at login, cleared at logout |
+| `asp_net_roles`, `asp_net_user_roles` | Identity's own role model | **no** — role is a column on `ticket.users` |
+| `asp_net_user_claims`, `asp_net_role_claims` | persisted claims | **no** — claims are minted into the JWT per request |
+| `asp_net_user_logins`, `asp_net_user_tokens` | external logins, 2FA tokens | **no** — no external providers, no 2FA |
+| `__EFMigrationsHistory` | this schema's migration history | |
+
+Five of those eight tables exist only because `IdentityDbContext` creates them. They are
+left in place rather than mapped away: removing them buys nothing and would make a future
+move to external logins or 2FA a migration instead of a configuration change.
+
+### How the two connect
+
+```
+        identity schema                      ticket schema
+  ┌────────────────────────┐          ┌──────────────────────────┐
+  │ asp_net_users          │          │ users                    │
+  │  id                    │◄─────────│  identity_id             │
+  │  email                 │          │  name, email             │
+  │  password_hash         │          │  role  (User/Mod/Admin)  │
+  │  security_stamp        │          │  is_active, is_deleted   │
+  └────────────────────────┘          └──────────────────────────┘
+             ▲                              ▲            ▲
+             │                       requester_id   assignee_id
+  ┌──────────┴─────────────┐          ┌──────┴────────────┴──────┐
+  │ refresh_tokens         │          │ tickets                  │
+  │  token (unique)        │          │  reference (identity)    │
+  │  expires_at_utc        │          │  status, priority        │
+  └────────────────────────┘          │  category_id ──► categories
+                                      │  resolved_at             │
+                                      └──────────────────────────┘
+                                                 ▲
+                                          ┌──────┴───────────────┐
+                                          │ ticket_comments      │
+                                          └──────────────────────┘
+```
+
+`users.identity_id` is drawn as an arrow, but it is **not** a database foreign key — it
+cannot be, across two contexts. It is enforced in code, at the one place that creates both
+rows together (`SeedUsersAsync`, and account creation in `UsersController`).
+
+---
+
 ## API reference
 
 Every route is enforced **on the route itself**, not only in the UI. Ownership rules an
@@ -275,6 +407,7 @@ checked inside the action and answer **403**.
 | `GET` | `/api/categories` | authenticated |
 | `POST` `PATCH` `DELETE` | `/api/categories`, `/api/categories/{id}` | admin |
 | `GET` | `/api/users` | admin |
+| `POST` | `/api/users` | admin — writes the credential row and the domain row together |
 | `GET` | `/api/users/assignable` | moderator, admin — active moderators and admins |
 | `PATCH` | `/api/users/{id}` | admin |
 | `GET` | `/api/metrics/overview`, `/agents`, `/requesters` | admin |
@@ -337,22 +470,8 @@ rather than at each call site.
 
 ## Architecture, and why
 
-### Two DbContexts, two schemas
-
-`ApplicationDbContext` owns the `ticket` schema; `ApplicationIdentityDbContext` owns
-`identity`. They share one connection string and one physical database but keep **separate
-migration histories**, so an Identity framework upgrade cannot collide with a domain
-migration. Swapping the credential store later touches one schema and one column.
-
-### A domain `User`, separate from `IdentityUser`
-
-`Entities/User` is a peer of `Ticket` and `Category` — it carries name, email, role and
-`IsActive`, and links to the credential record through `IdentityId`. Tickets have **real
-foreign keys** to it, so `requesterName` and `assigneeName` come from a join rather than from
-denormalised strings that can drift.
-
-Two navigations point at the same table (`Requester`, `Assignee`), which EF cannot
-disambiguate on its own, so `TicketConfiguration` names both foreign keys explicitly.
+> The two schemas, why ASP.NET Identity is here, and how the domain user links to the
+> credential record are covered in [The database](#the-database).
 
 ### Role is a column, not a join
 

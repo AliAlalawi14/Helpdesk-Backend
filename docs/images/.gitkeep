@@ -1,0 +1,5 @@
+# Diagrams referenced by the README.
+#
+# Expected files:
+#   schema-ticket.png    the ticket schema (domain tables)
+#   schema-identity.png  the identity schema (credentials)
