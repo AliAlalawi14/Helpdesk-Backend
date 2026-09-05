@@ -8,6 +8,7 @@ using backend.Extensions;
 using FluentValidation;
 using FluentValidation.Results;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -24,8 +25,8 @@ namespace backend.Controllers;
 // each action rather than on the class, where it would have applied to that one too.
 //
 // Role and IsActive are columns on the domain user, so listing and updating is ordinary
-// EF and this controller needs no Identity types at all. Accounts are created by the
-// seed; there is no create endpoint.
+// EF. UserManager appears in exactly one place — creating an account, which has to write
+// the credential as well as the record.
 [ApiController]
 [Route("api/users")]
 public sealed class UsersController(
@@ -100,6 +101,73 @@ public sealed class UsersController(
         return Ok(data);
     }
 
+    // Creates both halves of an account in one request: the identity record that holds
+    // the credential, and the domain record that holds name, role and the active flag —
+    // the same two writes the seed makes (DatabaseExtensions.CreateUserAsync).
+    [Authorize(Roles = Roles.Admin)]
+    [HttpPost]
+    public async Task<IActionResult> CreateUser(
+        [FromBody] CreateUserDto dto,
+        [FromServices] IValidator<CreateUserDto> validator,
+        [FromServices] UserManager<IdentityUser> userManager)
+    {
+        ValidationResult validation = await validator.ValidateAsync(dto);
+        if (!validation.IsValid)
+        {
+            return this.ValidationFailed(validation);
+        }
+
+        string email = dto.Email.Trim();
+
+        // One email, one account, across both schemas. Checked here so the answer is a
+        // field error the form can place, not an Identity "DuplicateUserName" string.
+        bool emailTaken = await userManager.FindByEmailAsync(email) is not null
+            || await dbContext.Users.AnyAsync(u => EF.Functions.ILike(u.Email, email));
+        if (emailTaken)
+        {
+            return FieldProblem("email", "An account with this email already exists.");
+        }
+
+        var identityUser = new IdentityUser
+        {
+            Email = email,
+            UserName = email,           // Identity requires a username; email is fine
+            EmailConfirmed = true       // there is no confirmation flow in this system
+        };
+
+        IdentityResult created = await userManager.CreateAsync(identityUser, dto.Password);
+        if (!created.Succeeded)
+        {
+            // Everything Identity refuses at this point is about the password — the email
+            // was checked above — so it lands on that field, one message per broken rule.
+            return FieldProblem("password", created.Errors.Select(e => e.Description).ToArray());
+        }
+
+        DateTime now = DateTime.UtcNow;
+        var user = new DomainUser
+        {
+            Id = DomainUser.NewId(),
+            Name = dto.Name.Trim(),
+            Email = email,
+            Role = dto.Role,
+            IsActive = true,
+            IdentityId = identityUser.Id,   // the link between the two schemas
+            CreatedAt = now,
+            UpdatedAt = now,
+            CreatedBy = userContext.GetUserId()
+        };
+
+        dbContext.Users.Add(user);
+        await dbContext.SaveChangesAsync();
+
+        UserDto result = await dbContext.Users
+            .Where(u => u.Id == user.Id)
+            .Select(UserQueries.ProjectToDto())
+            .FirstAsync();
+
+        return CreatedAtAction(nameof(GetUsers), new { id = user.Id }, result);
+    }
+
     [Authorize(Roles = Roles.Admin)]
     [HttpPatch("{id}")]
     public async Task<IActionResult> UpdateUser(
@@ -168,5 +236,20 @@ public sealed class UsersController(
             .FirstAsync();
 
         return Ok(result);
+    }
+
+    // The same 400 shape ValidationExtensions builds, for a failure found after the
+    // validator ran: keyed by lowercased field name so the form can place it.
+    private ObjectResult FieldProblem(string field, params string[] messages)
+    {
+        ProblemDetails problem = ProblemDetailsFactory.CreateProblemDetails(
+            HttpContext,
+            statusCode: StatusCodes.Status400BadRequest,
+            title: "Validation failed",
+            detail: "One or more validation errors occurred");
+
+        problem.Extensions["errors"] = new Dictionary<string, string[]> { [field] = messages };
+
+        return new ObjectResult(problem) { StatusCode = StatusCodes.Status400BadRequest };
     }
 }
