@@ -1,0 +1,33 @@
+# Build output
+bin/
+obj/
+*.user
+
+# Visual Studio
+.vs/
+*.suo
+*.userprefs
+
+# Local configuration and secrets.
+#
+# appsettings.Development.json carries the database connection string and the JWT signing
+# key, so it stays out of the repository; appsettings.Development.example.json is the
+# committed template. The monorepo's root .gitignore covers this too, but that file does not
+# travel when the backend is published as its own repository — and without it, `git add .`
+# here stages the credential.
+appsettings.Development.json
+.env
+.env.local
+.env.*.local
+
+# Docker volumes. .containers holds the live Postgres data directory and Seq's logs: tens of
+# megabytes of database internals that are neither source nor reproducible input.
+.containers/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
