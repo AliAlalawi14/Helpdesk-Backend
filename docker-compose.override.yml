@@ -1,14 +1,26 @@
+# Visual Studio generates this file, but Compose merges it into *every* `docker compose up`,
+# including on machines that have never opened Visual Studio. Anything added here has to stay
+# cross-platform, or a clean clone stops running on macOS and Linux.
 services:
   backend:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_HTTP_PORTS=8080
       - ASPNETCORE_HTTPS_PORTS=8081
-    ports:
-      - "8080"
-      - "8081"
+    # Deliberately no `ports:` here. Compose *appends* port mappings instead of replacing
+    # them, so the "8080"/"8081" entries Visual Studio writes do not override the 5000:8080
+    # in docker-compose.yml - they publish the same container ports a second time on random
+    # host ports, which is why `docker ps` used to show four mappings. The frontend's Vite
+    # proxy targets 5000, so the extras were noise that made the real mapping hard to find.
     volumes:
-      - ${APPDATA}/Microsoft/UserSecrets:/home/app/.microsoft/usersecrets:ro
-      - ${APPDATA}/Microsoft/UserSecrets:/root/.microsoft/usersecrets:ro
-      - ${APPDATA}/ASP.NET/Https:/home/app/.aspnet/https:ro
-      - ${APPDATA}/ASP.NET/Https:/root/.aspnet/https:ro
+      # Visual Studio's user secrets and HTTPS developer certificate, for F5 debugging.
+      # APPDATA exists only on Windows. Left bare, the source collapses to
+      # /Microsoft/UserSecrets and Compose tries to create that at the filesystem root -
+      # which fails on macOS and Linux, so `docker compose up` never got as far as building.
+      # The fallback points those platforms at an empty ignored directory instead. Nothing
+      # outside Visual Studio reads either path: docker-compose.yml supplies the API's
+      # configuration itself, which is what lets a bare clone boot with no setup step.
+      - ${APPDATA:-./.containers/vs}/Microsoft/UserSecrets:/home/app/.microsoft/usersecrets:ro
+      - ${APPDATA:-./.containers/vs}/Microsoft/UserSecrets:/root/.microsoft/usersecrets:ro
+      - ${APPDATA:-./.containers/vs}/ASP.NET/Https:/home/app/.aspnet/https:ro
+      - ${APPDATA:-./.containers/vs}/ASP.NET/Https:/root/.aspnet/https:ro

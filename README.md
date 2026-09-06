@@ -25,7 +25,72 @@ serves the API only and ships no UI.
 
 ## Running it
 
+### Quick start — Docker
+
+From a fresh clone, one command:
+
+```bash
+cd backend                 # the folder holding docker-compose.yml
+docker compose up -d --build
+```
+
+That is the whole procedure. There is **no config file to copy, no database to install, and
+no .NET SDK required** — Compose builds the API, starts Postgres, waits for it to pass a
+healthcheck, applies both sets of migrations and seeds the data. First run takes a couple of
+minutes for the build; after that it is seconds.
+
+| | |
+|---|---|
+| **API** | **http://localhost:5000** |
+| OpenAPI document | http://localhost:5000/openapi/v1.json (anonymous) |
+| Postgres | `localhost:5439`, user `postgres`, password `postgres` |
+| Log in as | `admin@example.com` / `Password123!` — [three more accounts](#seeded-data-and-logins) |
+
+Confirm it came up:
+
+```bash
+curl -s http://localhost:5000/api/auth/login   -H "Content-Type: application/json"   -d '{"email":"admin@example.com","password":"Password123!"}'
+```
+
+An `{"accessToken":"eyJ…"}` back means the whole chain worked — container, database,
+migrations, seed.
+
+Useful from there:
+
+```bash
+docker compose logs -f backend     # follow the API
+docker compose ps                  # both should be Up, Postgres "(healthy)"
+docker compose down                # stop
+docker compose up -d --build       # after pulling new code
+```
+
+Both services are `restart: unless-stopped`, so they come back by themselves after a reboot
+or a Docker Desktop update. `docker compose down` is what keeps them down.
+
+> **The frontend is not in Compose.** Only the API and its database are containerised. Run
+> `helpdesk-web` on your machine with `npm install && npm run dev` and open
+> **http://localhost:5173** — its Vite dev server proxies `/api` to the container on 5000, so
+> nothing to configure. See [step 5](#5-the-frontend).
+
+### The other two ways to run it
+
+Both are for working *on* the API rather than just running it, and both need you to start
+Postgres yourself:
+
+| You want | Do this | Where Postgres comes from |
+|---|---|---|
+| **A local debug loop** — breakpoints, fast rebuilds, no image to rebuild | Steps 1-5 below | You start it: `docker compose up -d helpdesk.postgres` (step 2) |
+| **F5 in Visual Studio** | [Pick the right profile](#if-you-open-this-in-visual-studio) — the two container profiles are **not** equivalent | Depends on the profile. One of them starts no database at all, and does not publish port 5000. |
+
+Whichever you pick, *something* has to be serving Postgres before the API starts. Nearly
+every startup failure in [Troubleshooting](#troubleshooting) is that and nothing more.
+
 ### What you need
+
+For the [Docker quick start](#quick-start--docker), **only Docker Desktop** — nothing else,
+not even the .NET SDK. The image builds the API inside itself.
+
+Steps 1-5 below run the API on your machine instead, and need:
 
 | | |
 |---|---|
@@ -167,18 +232,15 @@ The OpenAPI document is at **http://localhost:5000/openapi/v1.json** in Developm
 
 ### Running the API in Docker too
 
-Steps 1-4 run the API on your machine and only Postgres in a container. To run the whole
-stack in containers instead — **from a bare clone, with none of steps 1-3 done**:
+The command itself is in the [quick start](#quick-start--docker); this is what it does and
+why it needs nothing from you.
 
-```bash
-docker compose up -d --build
-```
-
-That is the entire procedure. Compose builds `backend/Dockerfile`, waits for Postgres to
-pass its healthcheck, applies both migrations, seeds, and serves on
-**http://localhost:5000**. You do not need `appsettings.Development.json` for this path;
-it is gitignored, so a fresh clone does not have one and the image is built before anyone
-could copy it. Everything the container needs is set in `docker-compose.yml` instead.
+You do not need `appsettings.Development.json` for this path. It is gitignored, so a fresh
+clone does not have one — and the image is built before anyone could copy it in, so the
+container could never pick it up anyway. Everything the API needs to boot is therefore set
+in `docker-compose.yml` itself: the connection string, `Jwt__Key`, and the CORS origins.
+That is what makes `git clone && docker compose up` work with no setup step. The values
+there are throwaway local ones and are **not** safe anywhere real.
 
 Only `backend` and `helpdesk.postgres` start. The two optional tools are behind a profile:
 
@@ -205,6 +267,38 @@ crossing back out to the port your host publishes. **Start Postgres first**
 (`docker compose up -d helpdesk.postgres`) or this profile has nothing to connect to.
 `host.docker.internal` is a Docker Desktop convenience; on plain Linux Docker it does not
 resolve unless you add it via `extra_hosts`.
+
+> **Postgres has to already be up, and this profile will not start it.** It usually is —
+> `helpdesk.postgres` is `restart: unless-stopped`, so it survives reboots and Docker Desktop
+> updates. But if you have run `docker compose down`, F5 brings back the API alone, pointed
+> at a host port nothing is serving. The error reads as a *network* failure rather than a
+> missing database (see [Troubleshooting](#troubleshooting)), which sends people looking in
+> the wrong place. `docker compose ps` first.
+
+> **It also does not publish port 5000.** `publishAllPorts: true` hands the container random
+> host ports — `0.0.0.0:32770->8080/tcp` — while the frontend's Vite proxy targets 5000.
+> So `helpdesk-web` cannot reach an API started this way even when that API is perfectly
+> healthy; you get `[api proxy] cannot reach http://localhost:5000` in the Vite console. If
+> you are working on the frontend at all, use Compose or `dotnet run`, not this profile.
+
+#### `docker-compose.override.yml`, and why it is easy to break
+
+Compose merges `docker-compose.override.yml` into **every** `docker compose up`, on every
+machine — not just the ones running Visual Studio, which is what generates it. Two things
+follow, and both have bitten this repo:
+
+- **Keep it cross-platform.** It mounts Visual Studio's user secrets and HTTPS dev
+  certificate from `${APPDATA}`, which exists only on Windows. Bare, that collapses to
+  `/Microsoft/UserSecrets` on macOS and Linux and Compose tries to create it at the
+  filesystem root, so `docker compose up` fails before it builds anything. The file now
+  writes `${APPDATA:-./.containers/vs}`, which keeps Windows behaviour and gives everyone
+  else an empty ignored directory.
+- **`ports` append, they do not replace.** Adding `"8080"` here does not change the
+  `5000:8080` in `docker-compose.yml`; it publishes the container port a *second* time on a
+  random host port. That is why `docker ps` used to list four mappings for one service. The
+  override no longer declares ports at all.
+
+If Visual Studio ever regenerates this file, check both points before committing it.
 
 #### Why the connection string differs in a container
 
@@ -250,6 +344,8 @@ you point the browser at the API directly.
 | Symptom | Cause and fix |
 |---|---|
 | `Npgsql.NpgsqlException: Connection refused` on startup | Postgres is not running, or is on a different port. `docker compose ps` — the container should be up with `0.0.0.0:5439->5432/tcp`. Check `Port=5439` in your connection string. |
+| `Failed to connect to [fdc4:…::254]:5439` with inner `SocketException: Network is unreachable`, from the **Container (Dockerfile)** profile | Same cause as the row above — nothing is serving host port 5439 — but it reports differently, so it is easy to chase the wrong thing. The IPv6 address is a red herring: `host.docker.internal` resolves to **both** `192.168.65.254` and a `fdc4:…` ULA, Npgsql tries the IPv6 one first, and the container has no IPv6 route, so the socket fails as `Network is unreachable` before it can be refused. Do not go configuring IPv6. Start the database: `docker compose up -d helpdesk.postgres`. |
+| It all worked yesterday; today every container is `Exited (255)` with the same timestamp | Docker Desktop restarted or updated and took the stack down with it. Both services are `restart: unless-stopped` so this should now heal itself — if it has not, they were stopped explicitly (`docker compose down`/`stop`), which is exactly what that policy honours. Bring them back: `docker compose up -d`. Note the **Container (Dockerfile)** profile starts only the API, so F5 alone will not fix it. |
 | `Failed to connect to 127.0.0.1:5432` when the **API runs in a container** | The container is using the `Host=localhost` string from `appsettings.Development.json`, where `localhost` means the API container itself. Start it with `docker compose up`, which sets `ConnectionStrings__Database` to `Host=helpdesk.postgres`. A bare `docker run` of the image skips compose entirely and hits exactly this. |
 | `Connection refused` from the **right** host (`helpdesk.postgres`), only on a first run | The Postgres healthcheck went green during `initdb`, before the server accepted TCP. Check `docker-compose.yml` still has `-h 127.0.0.1` in the `pg_isready` test — see [the note above](#the-pg_isready--h-127001-in-the-healthcheck). |
 | `password authentication failed for user "postgres"` | Your connection string password and the container's `POSTGRES_PASSWORD` disagree. `POSTGRES_PASSWORD` is only read when the data directory is first created, so setting a `.env` afterwards changes nothing — the volume kept the old password. Either delete `./.containers/postgres_data` and start again, or reset the password in place: `docker compose exec helpdesk.postgres psql -U postgres -c "ALTER USER postgres WITH PASSWORD 'postgres';"` (the local socket is `trust`, so this works without knowing the old one). |

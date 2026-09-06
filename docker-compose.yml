@@ -4,6 +4,9 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    # Comes back with the database after a Docker Desktop restart. Safe to restart at will:
+    # migrations and both seeders are idempotent, so a repeat run changes nothing.
+    restart: unless-stopped
     ports:
       - 5000:8080
       - 5001:8081
@@ -33,6 +36,12 @@ services:
 
   helpdesk.postgres:
     image: postgres:17.2 # or latest
+    # Without this, a Docker Desktop restart or update stops the container and nothing brings
+    # it back: every service ends up `Exited (255)` at the same timestamp, and the next thing
+    # you start fails to reach a database that was running fine yesterday. The API's Visual
+    # Studio "Container (Dockerfile)" profile starts no database of its own, so that failure
+    # survives an F5 and reads as a network error rather than a missing service.
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-TicketingSystem}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
